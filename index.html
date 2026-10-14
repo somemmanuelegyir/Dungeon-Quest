@@ -1,0 +1,278 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Dungeon Quest</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#100f19;color:#f8e7bd;font-family:system-ui, sans-serif;text-align:center}
+header{padding:12px 8px;background:#211c2d;border-bottom:2px solid #9b713e}
+h1{margin:0;color:#f7c66a;font-size:25px;letter-spacing:2px}
+header p{margin:3px;font-size:12px;color:#c4b8d7}
+#hud{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;padding:10px}
+.stat{background:#282338;border:1px solid #5a496d;border-radius:8px;padding:6px 10px;font-size:13px}
+#health{color:#ff7777}
+#game{display:block;width:min(96vw,640px);height:auto;margin:0 auto;background:#252334;border:3px solid #92704a;border-radius:5px;touch-action:none}
+#message{min-height:27px;padding:5px;font-size:13px;color:#f6d78e}
+.controls{display:flex;justify-content:center;align-items:center;gap:22px;padding:5px 12px 12px;touch-action:none}
+.pad{display:grid;grid-template-columns:repeat(3,49px);grid-template-rows:repeat(2,46px);gap:4px}
+button{background:#3b324d;color:white;border:1px solid #8b79a5;border-radius:10px;font-size:21px;font-weight:bold;touch-action:none;user-select:none}
+.pad button{width:49px;height:46px}
+.pad .up{grid-column:2}
+.pad .left{grid-column:1;grid-row:2}
+.pad .down{grid-column:2;grid-row:2}
+.pad .right{grid-column:3;grid-row:2}
+#attack{width:94px;height:94px;border-radius:50%;background:#853a35;border:3px solid #e58b60;font-size:15px}
+.actions{display:flex;justify-content:center;gap:10px;padding-bottom:12px}
+.actions button{font-size:13px;padding:8px 14px}
+#help{font-size:12px;color:#b9adc9;padding:0 12px 16px}
+@media(min-width:700px){.controls{gap:50px}}
+</style>
+</head>
+<body>
+<header>
+<h1>⚔ DUNGEON QUEST</h1>
+<p>Explore the dungeon. Claim the treasure. Defeat the boss.</p>
+</header>
+<div id="hud">
+<div class="stat" id="health">❤️ Health: 100</div>
+<div class="stat" id="level">🏰 Level: 1 / 3</div>
+<div class="stat" id="coins">🪙 Coins: 0</div>
+<div class="stat" id="weapon">⚔ Weapon: Iron Sword</div>
+</div>
+<canvas id="game" width="480" height="480"></canvas>
+<div id="message">Explore the dungeon and defeat every enemy!</div>
+<div class="controls">
+<div class="pad">
+<button class="up" data-key="ArrowUp">▲</button>
+<button class="left" data-key="ArrowLeft">◀</button>
+<button class="down" data-key="ArrowDown">▼</button>
+<button class="right" data-key="ArrowRight">▶</button>
+</div>
+<button id="attack">⚔<br>ATTACK</button>
+</div>
+<div class="actions">
+<button id="sound">🔊 Sound On</button>
+<button id="restart">↻ Restart</button>
+</div>
+<div id="help">Move with the arrows or WASD. Attack with Space or the red button. Works on phones and computers.</div>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const W=480,T=32;
+const el=id=>document.getElementById(id);
+let keys={},player,enemies,chests,coins,level,weapon,won,dead,attackTime,attackCooldown,notice,audioOn=true,audioCtx;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function sound(freq=440,duration=.08,type="square"){
+ if(!audioOn)return;
+ try{
+  audioCtx=audioCtx||new(window.AudioContext||window.webkitAudioContext)();
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type=type;o.frequency.value=freq;g.gain.value=.045;
+  o.connect(g);g.connect(audioCtx.destination);
+  o.start();g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+duration);
+  o.stop(audioCtx.currentTime+duration);
+ }catch(e){}
+}
+function say(s){notice=s;el("message").textContent=s}
+function start(){
+ level=1;coins=0;weapon=1;won=false;dead=false;
+ player={x:240,y:240,r:11,hp:100,max:100,dirX:1,dirY:0,inv:0};
+ newLevel();say("Find treasure and defeat every enemy!");updateHUD();
+}
+function newLevel(){
+ enemies=[];chests=[];
+ const n=level===1?4:level===2?6:1;
+ for(let i=0;i<n;i++){
+  let boss=level===3;
+  let x=50+Math.random()*380,y=50+Math.random()*380;
+  if(Math.hypot(x-player.x,y-player.y)<110){x=410;y=410-i*35}
+  enemies.push({x,y,r:boss?23:12,hp:boss?12+level*2:(level===1?2:3),
+   max:boss?12+level*2:(level===1?2:3),boss,speed:boss?43:level===1?28:37,
+   hit:0,phase:Math.random()*6});
+ }
+ if(level<3){
+  for(let i=0;i<3;i++)chests.push({x:65+i*165,y:i%2?390:75,open:false});
+ }
+ player.x=240;player.y=240;
+}
+function updateHUD(){
+ el("health").textContent="❤️ Health: "+Math.max(0,Math.ceil(player.hp));
+ el("level").textContent="🏰 Level: "+level+" / 3";
+ el("coins").textContent="🪙 Coins: "+coins;
+ el("weapon").textContent="⚔ Weapon: "+(weapon===1?"Iron Sword":weapon===2?"Steel Sword":"Legendary Blade");
+}
+function attack(){
+ if(dead||won||attackCooldown>0)return;
+ attackTime=.18;attackCooldown=.34;sound(weapon===3?760:weapon===2?600:470,.09);
+ let hit=0;
+ for(const e of enemies){
+  let dx=e.x-player.x,dy=e.y-player.y,d=Math.hypot(dx,dy)||1;
+  let dot=(dx/d)*player.dirX+(dy/d)*player.dirY;
+  if(d<=(e.r+35+weapon*3)&&dot>-.1){
+   e.hp-=weapon===3?4:weapon===2?3:2;e.hit=.13;hit++;
+   if(e.hp<=0){
+    coins+=e.boss?30:5+Math.floor(Math.random()*6);
+    sound(e.boss?180:260,.13,"triangle");
+   }
+  }
+ }
+ enemies=enemies.filter(e=>e.hp>0);
+ if(hit)say("Direct hit! Keep fighting.");
+ if(!enemies.length)nextLevel();
+ updateHUD();
+}
+function nextLevel(){
+ if(level<3){
+  level++;
+  if(level===2){weapon=2;player.hp=Math.min(player.max,player.hp+20);say("Level 2! Steel Sword found. Health restored.");}
+  else {weapon=3;player.hp=Math.min(player.max,player.hp+20);say("Final level! Legendary Blade acquired. Face the boss!");}
+  sound(660,.2,"triangle");newLevel();updateHUD();
+ }else{
+  won=true;say("🏆 VICTORY! The dungeon boss is defeated!");sound(880,.4,"triangle");
+ }
+}
+function update(dt){
+ if(dead||won)return;
+ const p=player,speed=145;
+ let dx=0,dy=0;
+ if(keys.ArrowLeft||keys.a)dx--;
+ if(keys.ArrowRight||keys.d)dx++;
+ if(keys.ArrowUp||keys.w)dy--;
+ if(keys.ArrowDown||keys.s)dy++;
+ if(dx||dy){
+  let d=Math.hypot(dx,dy);dx/=d;dy/=d;
+  p.dirX=dx;p.dirY=dy;
+  p.x=clamp(p.x+dx*speed*dt,20,W-20);
+  p.y=clamp(p.y+dy*speed*dt,20,W-20);
+ }
+ attackCooldown=Math.max(0,attackCooldown-dt);
+ attackTime=Math.max(0,attackTime-dt);
+ p.inv=Math.max(0,p.inv-dt);
+ for(const c of chests){
+  if(!c.open&&Math.hypot(c.x-p.x,c.y-p.y)<25){
+   c.open=true;coins+=15;player.hp=Math.min(p.max,p.hp+12);
+   if(weapon<3&&Math.random()<.45)weapon++;
+   say("Treasure found! +15 coins and health restored.");sound(740,.16,"triangle");updateHUD();
+  }
+ }
+ for(const e of enemies){
+  e.hit=Math.max(0,e.hit-dt);e.phase+=dt;
+  let dx=p.x-e.x,dy=p.y-e.y,d=Math.hypot(dx,dy)||1;
+  if(d>e.r+p.r+2){e.x+=dx/d*e.speed*dt;e.y+=dy/d*e.speed*dt;}
+  if(d<e.r+p.r+3&&p.inv<=0){
+   p.hp-=e.boss?17:level===1?8:11;p.inv=.75;
+   sound(120,.12);say(e.boss?"The boss hit you! Dodge and strike!":"You've been hit! Keep moving.");updateHUD();
+   if(p.hp<=0){p.hp=0;dead=true;say("💀 GAME OVER — Tap Restart to try again.");updateHUD();}
+  }
+ }
+}
+function draw(){
+ ctx.clearRect(0,0,W,W);
+ // Stone dungeon floor
+ for(let y=0;y<W;y+=T)for(let x=0;x<W;x+=T){
+  ctx.fillStyle=((x/T+y/T)%2===0)?"#383544":"#302e3c";
+  ctx.fillRect(x,y,T,T);
+  ctx.strokeStyle="#494454";ctx.lineWidth=1;ctx.strokeRect(x+.5,y+.5,T,T);
+  if((x*3+y*7)%11===0){ctx.fillStyle="#514b58";ctx.fillRect(x+7,y+8,3,3);}
+ }
+ // Walls and torches
+ ctx.fillStyle="#171620";ctx.fillRect(0,0,W,12);ctx.fillRect(0,W-12,W,12);
+ ctx.fillRect(0,0,12,W);ctx.fillRect(W-12,0,12,W);
+ for(const x of [45,435]){
+  ctx.fillStyle="#8b5131";ctx.fillRect(x-4,42,8,17);
+  ctx.fillStyle="#ffb343";ctx.beginPath();ctx.arc(x,40,7+Math.sin(Date.now()/150+x)*2,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="#ffdc82";ctx.beginPath();ctx.arc(x,40,3,0,Math.PI*2);ctx.fill();
+ }
+ // Treasure chests
+ for(const c of chests){
+  ctx.fillStyle=c.open?"#554637":"#9a5a2b";
+  ctx.fillRect(c.x-12,c.y-9,24,19);
+  ctx.fillStyle=c.open?"#726052":"#e5b451";
+  ctx.fillRect(c.x-12,c.y-9,24,5);
+  ctx.fillStyle="#f8d86d";ctx.fillRect(c.x-2,c.y-2,4,6);
+  if(c.open){ctx.fillStyle="#f8d86d";ctx.font="14px sans-serif";ctx.fillText("✦",c.x-5,c.y-14);}
+ }
+ // Enemies
+ for(const e of enemies){
+  ctx.save();ctx.translate(e.x,e.y);
+  if(e.hit>0)ctx.globalAlpha=.45;
+  if(e.boss){
+   ctx.fillStyle="#742b42";ctx.beginPath();ctx.arc(0,0,e.r,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle="#c44b59";ctx.fillRect(-17,-7,34,13);
+   ctx.fillStyle="#ffe16b";ctx.fillRect(-12,-7,5,5);ctx.fillRect(7,-7,5,5);
+   ctx.fillStyle="#f5c5d3";ctx.font="bold 10px sans-serif";ctx.fillText("BOSS",-15,-29);
+  }else{
+   ctx.fillStyle=level===1?"#56a66a":"#9b7ac7";
+   ctx.beginPath();ctx.arc(0,0,e.r,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle="#f6efb4";ctx.fillRect(-6,-4,4,4);ctx.fillRect(3,-4,4,4);
+   ctx.fillStyle="#32273c";ctx.fillRect(-4,5,9,3);
+  }
+  ctx.globalAlpha=1;
+  ctx.fillStyle="#160f18";ctx.fillRect(-15,-e.r-12,30,4);
+  ctx.fillStyle="#e95c68";ctx.fillRect(-15,-e.r-12,30*Math.max(0,e.hp/e.max),4);
+  ctx.restore();
+ }
+ // Player
+ const p=player;
+ ctx.save();ctx.translate(p.x,p.y);
+ if(p.inv>0&&Math.floor(Date.now()/70)%2===0)ctx.globalAlpha=.35;
+ ctx.fillStyle="#17212d";ctx.beginPath();ctx.ellipse(0,7,12,8,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#3e9bd1";ctx.fillRect(-9,-8,18,17);
+ ctx.fillStyle="#f1c59b";ctx.beginPath();ctx.arc(0,-10,8,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#4c3026";ctx.fillRect(-7,-17,14,5);
+ ctx.fillStyle="#fff";ctx.fillRect(p.dirX*4-2,p.dirY*4-12,3,3);
+ // Sword
+ ctx.strokeStyle=weapon===3?"#ffe47c":weapon===2?"#b9e5f6":"#d8dce7";
+ ctx.lineWidth=weapon===3?5:3;ctx.beginPath();
+ ctx.moveTo(p.dirX*7,p.dirY*7);ctx.lineTo(p.dirX*22,p.dirY*22);ctx.stroke();
+ if(attackTime>0){
+  ctx.strokeStyle="#ffe49a";ctx.lineWidth=5;
+  ctx.beginPath();ctx.arc(0,0,29,-1.5,1.5);ctx.stroke();
+ }
+ ctx.restore();
+ if(dead||won){
+  ctx.fillStyle="rgba(8,7,15,.78)";ctx.fillRect(20,155,440,165);
+  ctx.textAlign="center";ctx.fillStyle=won?"#ffdc76":"#ff8a8a";
+  ctx.font="bold 27px sans-serif";ctx.fillText(won?"VICTORY!":"GAME OVER",240,205);
+  ctx.fillStyle="#fff";ctx.font="15px sans-serif";
+  ctx.fillText(won?"The dungeon is yours.":"Your adventure isn't over.",240,239);
+  ctx.fillText("Tap RESTART below to play again",240,268);
+  ctx.textAlign="left";
+ }
+}
+let last=0;
+function loop(t){
+ const dt=Math.min((t-last)/1000||0,.04);last=t;
+ update(dt);draw();requestAnimationFrame(loop);
+}
+document.addEventListener("keydown",e=>{
+ const k=e.key.length===1?e.key.toLowerCase():e.key;
+ if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key))e.preventDefault();
+ keys[k]=true;if(e.key===" ")attack();
+});
+document.addEventListener("keyup",e=>{
+ const k=e.key.length===1?e.key.toLowerCase():e.key;keys[k]=false;
+});
+document.querySelectorAll("[data-key]").forEach(b=>{
+ const k=b.dataset.key;
+ const on=e=>{e.preventDefault();keys[k]=true};
+ const off=e=>{e.preventDefault();keys[k]=false};
+ b.addEventListener("pointerdown",on);
+ b.addEventListener("pointerup",off);
+ b.addEventListener("pointercancel",off);
+ b.addEventListener("pointerleave",off);
+});
+el("attack").addEventListener("pointerdown",e=>{e.preventDefault();attack()});
+el("restart").addEventListener("click",start);
+el("sound").addEventListener("click",()=>{
+ audioOn=!audioOn;el("sound").textContent=audioOn?"🔊 Sound On":"🔇 Sound Off";
+ if(audioOn)sound(600,.1);
+});
+start();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
